@@ -16,7 +16,7 @@ from root_numpy import root2rec #root2array
 trainVars = []
 
 def createGBRT(learning_rate=0.02, max_depth=5, n_estimators=500, subSample=0.5):
-    clf = GradientBoostingRegressor(n_estimators=n_estimators, learning_rate=learning_rate, max_depth=max_depth, random_state=1, loss='ls', verbose=1, subsample=subSample, max_features='auto', min_samples_leaf=1, min_samples_split=1)#'auto', loss=huber
+    clf = GradientBoostingRegressor(n_estimators=n_estimators, learning_rate=learning_rate, max_depth=max_depth, random_state=1, loss='lad', verbose=1, subsample=subSample, max_features=0.5, min_samples_leaf=1, min_samples_split=1)#'auto', loss=huber
     return clf
 
 def createSVR(C=0.1):
@@ -62,13 +62,19 @@ def train(clf, training_data, targets, weights, nCrossVal=4, var_lists=[]):
         t_train = targets[trainIndices]
         t_test = targets[testIndices]
 
-        w_train = weights[trainIndices]
-        w_test = weights[testIndices]
+        w_train = weights[trainIndices] if weights else None
+        w_test = weights[testIndices] if weights else None
 
         clf.fit(d_train, t_train, sample_weight=w_train)
         test_scores = clf.predict(d_test)
-        sum2 = sum(w*(s-t)**2 for s, t, w in zip(test_scores, t_test, w_test))
-        suml = sum(w*abs(s-t) for s, t, w in zip(test_scores, t_test, w_test))
+
+        if weights:
+            sum2 = sum(w*(s-t)**2 for s, t, w in zip(test_scores, t_test, w_test))
+            suml = sum(w*abs(s-t) for s, t, w in zip(test_scores, t_test, w_test))
+        else:
+            sum2 = sum((s-t)**2 for s, t in zip(test_scores, t_test))
+            suml = sum(abs(s-t) for s, t in zip(test_scores, t_test))
+
         print 'Eval score', sum2
         targetSum2 += sum2
         targetSum += suml
@@ -76,7 +82,7 @@ def train(clf, training_data, targets, weights, nCrossVal=4, var_lists=[]):
     # Train final classifier
     clf.fit(training_data, targets, weights)
     try:
-        joblib.dump(clf, 'train/{name}_u_weighted_clf.pkl'.format(name=clf.__class__.__name__), compress=9)
+        joblib.dump(clf, 'train/{name}_clf.pkl'.format(name=clf.__class__.__name__), compress=9)
     except:
         print 'SAVING DOES NOT WORK NOT SURE WHY'
 
@@ -86,13 +92,15 @@ def train(clf, training_data, targets, weights, nCrossVal=4, var_lists=[]):
     # targetSum /= float(len(training_data))
     # targetSum2 /= float(len(training_data))
 
-    targetSum /= np.sum(weights)
-    targetSum2 /= np.sum(weights)
+    sumWeights = np.sum(weights) if weights else len(targets)
+
+    targetSum /= sumWeights
+    targetSum2 /= sumWeights
 
     targetSum2 = math.sqrt(targetSum2)
 
-    print 'Normalised abs(..)', targetSum
     print 'Normalised sqrt(sum2)', targetSum2
+    print 'Normalised abs(..)', targetSum
     print
 
     # if doCrossVal:
@@ -109,7 +117,7 @@ def readFiles():
     print 'Reading files...'
 
 
-    arr = root2rec('data/mvaTrainingSample_72X25NS_Low_slimmed_weight.root', 'Flat')
+    arr = root2rec('data/mvaTrainingSample.root', 'Flat')
     
     global trainVars
 
@@ -133,8 +141,8 @@ def readFiles():
     weights = arr['weight']
 
 
-    # targets = arr['z_pT']
-    targets = arr['target_u']
+    targets = arr['z_pT']
+    # targets = arr['target_diffu']
     # targets = arr['target_phi']
 
     print 'Square sum PF:', math.sqrt(np.sum((arr['particleFlow_U'] - arr['z_pT'])**2)/len(arr))
@@ -144,10 +152,10 @@ def readFiles():
     print 'Abs diff Phi:', np.sum(abs(arr['target_phi']))/len(arr)
 
     print 'Square sum PF weighted:', math.sqrt(np.sum(arr['weight']*(arr['particleFlow_U'] - arr['z_pT'])**2)/np.sum(arr['weight']))
-    print 'Abs diff PF weighted:', np.sum(arr['weight']*abs(arr['particleFlow_U'] - arr['z_pT'])**2)/np.sum(arr['weight'])
+    print 'Abs diff PF weighted:', np.sum(arr['weight']*abs(arr['particleFlow_U'] - arr['z_pT']))/np.sum(arr['weight'])
 
-    print 'Square sum U weighted:', math.sqrt(np.sum(arr['weight']*(arr['target_u'] - 1.)**2)/np.sum(arr['weight']))
-    print 'Abs diff U weighted:', np.sum(arr['weight']*abs(arr['target_u'] - 1.)**2)/np.sum(arr['weight'])
+    print 'Square sum U weighted:', math.sqrt(np.sum(arr['weight']*(arr['target_diffu'])**2)/np.sum(arr['weight']))
+    print 'Abs diff U weighted:', np.sum(arr['weight']*abs(arr['target_diffu']))/np.sum(arr['weight'])
 
     print 'Done reading files.'
 
@@ -158,7 +166,8 @@ if __name__ == '__main__':
 
     classifier = 'GBRT' # 'Ada' #'GBRT'
     doTrain = True
-    doTest = True
+    useWeights = False
+
 
     # Settings for evaluation
     percentile = 83.5
@@ -174,18 +183,11 @@ if __name__ == '__main__':
     # clf = createBaggingSVR()
     clf = createGBRT()
 
+    if not useWeights:
+        weights = None
+
     if doTrain:
         print 'Start training'
         train(clf, training, targets, weights)
     
-    # else:
-    #     print 'Loading classifier'
-    #     if classifier == 'GBRT':
-    #         clf = joblib.load('train/GradientBoostingClassifier_clf.pkl')
-    #     elif classifier == 'RF':
-    #         clf = joblib.load('train/RandomForestClassifier_clf.pkl')
-    #     elif classifier == 'Ada':
-    #         clf = joblib.load('train/AdaBoostClassifier_clf.pkl')
-    #     else:
-    #         print 'ERROR: no valid classifier', classifier
 
